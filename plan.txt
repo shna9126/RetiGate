@@ -1,0 +1,499 @@
+I am building a research codebase called RetiGate — a bio-inspired 
+motion-saliency pre-filter for object detection. I am migrating from 
+a Google Colab notebook to a structured local Python project on a 
+MacBook M3 Pro. 
+
+Here is exactly what I need you to build, step by step. Do not skip 
+steps. Do not move to the next step until the current one is verified 
+working.
+
+---
+
+STEP 1: CREATE THE PROJECT STRUCTURE
+
+Create this exact directory layout:
+
+retigate/
+├── retigate/
+│   ├── __init__.py
+│   ├── core.py              # RetinaCore class
+│   ├── ablation.py          # RetinaAblation subclass
+│   ├── baselines/
+│   │   ├── __init__.py
+│   │   ├── frame_diff.py
+│   │   ├── mog2.py
+│   │   ├── disflow.py
+│   │   ├── farneback.py
+│   │   └── sahi_baseline.py
+│   ├── datasets/
+│   │   ├── __init__.py
+│   │   ├── kitti.py
+│   │   ├── davis.py
+│   │   └── synthetic.py
+│   ├── metrics/
+│   │   ├── __init__.py
+│   │   ├── mAP.py
+│   │   └── dsi.py
+│   ├── benchmark.py
+│   └── visualize.py
+├── experiments/
+│   ├── 01_cross_domain.py
+│   ├── 02_baselines.py
+│   ├── 03_ablation.py
+│   ├── 04_detection_mAP.py
+│   ├── 05_sahi_comparison.py
+│   ├── 06_pareto_sweep.py
+│   ├── 07_alpha_sweep.py
+│   ├── 08_power_measurement.py
+│   └── 09_failure_cases.py
+├── results/                 # gitignored large files, CSVs committed
+├── figures/
+├── notebooks/
+│   └── exploration.ipynb    # the original Colab goes here, read-only
+├── tests/
+│   ├── test_core.py
+│   ├── test_metrics.py
+│   └── test_baselines.py
+├── data/                    # gitignored — datasets live here
+│   ├── kitti/
+│   ├── davis/
+│   ├── middlebury/
+│   └── synthetic/
+├── requirements.txt
+├── setup.py
+├── Makefile
+├── .gitignore
+└── README.md
+
+---
+
+STEP 2: CREATE requirements.txt
+
+Write this exactly:
+
+numpy>=1.24.0
+opencv-python>=4.8.0
+scipy>=1.11.0
+torch>=2.0.0
+torchvision>=0.15.0
+ultralytics>=8.2.0
+torchmetrics[detection]>=1.0.0
+sahi>=0.11.0
+pandas>=2.0.0
+matplotlib>=3.7.0
+tqdm>=4.65.0
+Pillow>=10.0.0
+pytest>=7.4.0
+pyyaml>=6.0
+
+---
+
+STEP 3: CREATE setup.py
+
+Write a minimal setup.py that makes `retigate` importable as a package.
+
+---
+
+STEP 4: CREATE .gitignore
+
+Include: data/, results/*.npz, __pycache__, *.pyc, .DS_Store, 
+*.egg-info, dist/, build/, .env, venv/
+Do NOT gitignore: results/*.csv, figures/*.pdf, figures/*.png
+
+---
+
+STEP 5: CREATE THE VIRTUAL ENVIRONMENT AND INSTALL
+
+Run these commands:
+python3 -m venv venv
+source venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+
+Verify each package installed correctly. If anything fails, fix it 
+before moving on.
+
+---
+
+STEP 6: WRITE retigate/core.py
+
+This is the most important file. Write it with this exact class 
+structure:
+
+class RetinaCore:
+    """
+    The unified RetiGate architecture.
+    
+    All experiments must instantiate via RetinaCore.golden_baseline()
+    or RetinaCore.from_config(config_dict). Never call the constructor
+    directly in experiment scripts.
+    """
+    
+    def __init__(self,
+                 amacrine_decay: float = 0.1,
+                 global_weight: float = 1.5,
+                 tail_len: int = 15,
+                 shift_factor: float = 0.5,
+                 threshold: float = 0.05,
+                 use_global_inh: bool = True,
+                 use_sac_tail: bool = True):
+        
+        self.amacrine_decay = amacrine_decay
+        self.global_weight = global_weight
+        self.tail_len = tail_len
+        self.shift_amount = max(1, int(tail_len * shift_factor))
+        self.threshold = threshold
+        self.use_global_inh = use_global_inh
+        self.use_sac_tail = use_sac_tail
+        self.amacrine_state = None
+        
+        # Standard bio-kernels (DoG)
+        self.m_center_k = self._make_gaussian_kernel(9, 1.5)
+        self.m_surround_k = self._make_gaussian_kernel(21, 4.0)
+    
+    @classmethod
+    def golden_baseline(cls) -> 'RetinaCore':
+        """
+        Single source of truth for canonical parameters.
+        Every experiment in this repo uses this method.
+        """
+        return cls(
+            amacrine_decay=0.1,
+            global_weight=1.5,
+            tail_len=15,
+            shift_factor=0.5,
+            threshold=0.05,
+            use_global_inh=True,
+            use_sac_tail=True,
+        )
+    
+    @classmethod
+    def from_config(cls, config: dict) -> 'RetinaCore':
+        """For parameter sweeps. Pass dict of overrides."""
+        return cls(**config)
+    
+    def _make_gaussian_kernel(self, size: int, sigma: float):
+        import cv2
+        k = cv2.getGaussianKernel(size, sigma)
+        return k @ k.T
+    
+    def reset_memory(self):
+        self.amacrine_state = None
+    
+    def process_frame(self, frame: np.ndarray) -> dict:
+        """
+        Process one grayscale frame through the full retinal pipeline.
+        
+        Args:
+            frame: HxW uint8 grayscale image
+            
+        Returns:
+            dict with keys:
+                'M_Motion':  HxW float32 ganglion saliency map
+                'DS_Right':  HxW float32 rightward directional signal
+                'DS_Left':   HxW float32 leftward directional signal
+                'sparsity':  float, fraction of pixels gated out
+                'active_mask': HxW bool, True where M_Motion > threshold
+        """
+        import cv2
+        
+        # Stage 1: Spatial DoG filtering (Bipolar cells)
+        img = frame.astype(np.float32) / 255.0
+        m_c = cv2.filter2D(img, -1, self.m_center_k,
+                           borderType=cv2.BORDER_REFLECT)
+        m_s = cv2.filter2D(img, -1, self.m_surround_k,
+                           borderType=cv2.BORDER_REFLECT)
+        m_bipolar = np.abs(m_c - m_s)
+        
+        # Stage 2: Temporal leaky integration (Amacrine cells)
+        if self.amacrine_state is None:
+            self.amacrine_state = np.zeros_like(m_bipolar)
+        self.amacrine_state = (
+            self.amacrine_decay * m_bipolar +
+            (1 - self.amacrine_decay) * self.amacrine_state
+        )
+        
+        # Stage 3: Global inhibition (Ganglion cells)
+        if self.use_global_inh:
+            inhibition = (self.amacrine_state +
+                          self.global_weight * np.mean(self.amacrine_state))
+        else:
+            inhibition = self.amacrine_state
+        
+        m_ganglion = np.maximum(0.0, m_bipolar - inhibition)
+        
+        # Stage 4: SAC directional tail
+        if self.use_sac_tail:
+            smeared = cv2.blur(self.amacrine_state,
+                               (self.tail_len, 1))
+            ds_r = np.maximum(0.0, m_ganglion -
+                              np.roll(smeared, -self.shift_amount, axis=1))
+            ds_l = np.maximum(0.0, m_ganglion -
+                              np.roll(smeared, self.shift_amount, axis=1))
+            ds_r = cv2.GaussianBlur(ds_r, (5, 5), 1.5)
+            ds_l = cv2.GaussianBlur(ds_l, (5, 5), 1.5)
+        else:
+            ds_r = m_ganglion.copy()
+            ds_l = m_ganglion.copy()
+        
+        # Sparsity metrics
+        active_mask = m_ganglion > self.threshold
+        sparsity = 1.0 - (np.sum(active_mask) / active_mask.size)
+        
+        return {
+            'M_Motion': m_ganglion,
+            'DS_Right': ds_r,
+            'DS_Left': ds_l,
+            'sparsity': float(sparsity),
+            'active_mask': active_mask,
+        }
+    
+    def get_roi_bbox(self, out: dict, pad: int = 40,
+                     frame_shape: tuple = None) -> tuple:
+        """
+        From process_frame output, return (x1,y1,x2,y2) bounding box
+        of the active kinetic zone, with padding.
+        Returns None if no active pixels.
+        """
+        import cv2
+        mask = out['active_mask'].astype(np.uint8) * 255
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (35, 35))
+        dilated = cv2.dilate(mask, kernel, iterations=1)
+        contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL,
+                                        cv2.CHAIN_APPROX_SIMPLE)
+        valid = [cv2.boundingRect(c) for c in contours
+                 if cv2.contourArea(c) > 200]
+        if not valid:
+            return None
+        x1 = min(b[0] for b in valid)
+        y1 = min(b[1] for b in valid)
+        x2 = max(b[0]+b[2] for b in valid)
+        y2 = max(b[1]+b[3] for b in valid)
+        if frame_shape is not None:
+            H, W = frame_shape[:2]
+            x1 = max(0, x1 - pad)
+            y1 = max(0, y1 - pad)
+            x2 = min(W, x2 + pad)
+            y2 = min(H, y2 + pad)
+        return (x1, y1, x2, y2)
+
+---
+
+STEP 7: WRITE retigate/benchmark.py
+
+Write a statistical timing harness:
+
+import time
+import numpy as np
+from typing import Callable, Dict
+
+def benchmark(name: str,
+              fn: Callable,
+              n_runs: int = 200,
+              warmup: int = 10) -> Dict:
+    """
+    Run fn() n_runs times after warmup, return timing statistics.
+    All experiment scripts use this function for every timing claim.
+    """
+    # Warmup (JIT, cache warm, etc.)
+    for _ in range(warmup):
+        fn()
+    
+    times_ms = []
+    for _ in range(n_runs):
+        t0 = time.perf_counter()
+        fn()
+        times_ms.append((time.perf_counter() - t0) * 1000)
+    
+    times_ms = np.array(times_ms)
+    ci95 = 1.96 * np.std(times_ms, ddof=1) / np.sqrt(n_runs)
+    
+    return {
+        'name': name,
+        'n': n_runs,
+        'mean_ms': float(np.mean(times_ms)),
+        'std_ms': float(np.std(times_ms, ddof=1)),
+        'ci95_ms': float(ci95),
+        'p50_ms': float(np.percentile(times_ms, 50)),
+        'p95_ms': float(np.percentile(times_ms, 95)),
+        'p99_ms': float(np.percentile(times_ms, 99)),
+        'min_ms': float(np.min(times_ms)),
+        'max_ms': float(np.max(times_ms)),
+    }
+
+---
+
+STEP 8: WRITE retigate/datasets/kitti.py
+
+Write a dataset loader that:
+1. Loads images from data/kitti/training/image_2/
+2. Loads ground truth labels from data/kitti/training/label_2/
+3. Parses KITTI label format into boxes (xyxy) and class ids
+4. Maps these KITTI classes to IDs:
+   Car=0, Van=1, Truck=2, Pedestrian=3, Cyclist=4
+5. Returns an iterator of (image_path, gt_boxes, gt_classes) tuples
+6. Has a method load_flow_gt() that loads from 
+   data/kitti/training/flow_occ/ using the standard KITTI encoding:
+   flow_u = (img[:,:,2].astype(float) - 2**15) / 64.0
+   flow_v = (img[:,:,1].astype(float) - 2**15) / 64.0
+   valid_mask = img[:,:,0] > 0
+
+---
+
+STEP 9: WRITE retigate/metrics/mAP.py
+
+Write a proper mAP evaluator using torchmetrics:
+
+from torchmetrics.detection import MeanAveragePrecision
+import torch
+
+class DetectionEvaluator:
+    def __init__(self):
+        self.metric = MeanAveragePrecision(
+            box_format='xyxy',
+            iou_thresholds=[0.5, 0.55, 0.60, 0.65, 0.70,
+                            0.75, 0.80, 0.85, 0.90, 0.95],
+            class_metrics=True,
+        )
+    
+    def update(self, pred_boxes, pred_scores, pred_labels,
+               gt_boxes, gt_labels):
+        """
+        pred_boxes: tensor [N, 4] xyxy
+        pred_scores: tensor [N]
+        pred_labels: tensor [N] int
+        gt_boxes: tensor [M, 4] xyxy
+        gt_labels: tensor [M] int
+        """
+        preds = [{'boxes': pred_boxes,
+                  'scores': pred_scores,
+                  'labels': pred_labels}]
+        targets = [{'boxes': gt_boxes,
+                    'labels': gt_labels}]
+        self.metric.update(preds, targets)
+    
+    def compute(self) -> dict:
+        result = self.metric.compute()
+        return {k: float(v) for k, v in result.items()
+                if v.numel() == 1}
+    
+    def reset(self):
+        self.metric.reset()
+
+---
+
+STEP 10: WRITE tests/test_core.py
+
+Write these 5 unit tests and make them all pass:
+
+1. test_golden_baseline_runs_on_random_frame:
+   Create a random 480x640 uint8 frame, run golden_baseline().process_frame(),
+   assert output dict has all required keys, assert sparsity is between 0 and 1.
+
+2. test_sparsity_increases_with_static_frames:
+   Run the same frame 20 times through golden_baseline().
+   Assert sparsity on frame 20 > sparsity on frame 1
+   (temporal memory should suppress repeated static content).
+
+3. test_no_temporal_causes_collapse:
+   Create ablation with use_global_inh=False AND use_sac_tail=False.
+   Actually: create no_temporal variant where amacrine_state = m_bipolar each frame.
+   Run 5 static frames. Assert all M_Motion values == 0 
+   (inhibition exactly cancels activation).
+
+4. test_sac_removal_zeros_directional_asymmetry:
+   Create instance with use_sac_tail=False.
+   Assert DS_Right == DS_Left (element-wise) for any input.
+
+5. test_roi_bbox_returns_none_on_empty_mask:
+   Create a frame of all zeros (no edges, no motion).
+   Run process_frame. Assert get_roi_bbox() returns None.
+
+Run: pytest tests/test_core.py -v
+All 5 must pass before proceeding.
+
+---
+
+STEP 11: WRITE THE Makefile
+
+Write a Makefile with these targets:
+
+make setup      — creates venv and installs requirements
+make test       — runs pytest tests/
+make data       — prints dataset download instructions (does not 
+                  auto-download — user downloads manually due to 
+                  dataset licenses)
+make exp01      — runs experiments/01_cross_domain.py
+make exp02      — runs experiments/02_baselines.py  
+make exp03      — runs experiments/03_ablation.py
+make exp04      — runs experiments/04_detection_mAP.py
+make exp05      — runs experiments/05_sahi_comparison.py
+make exp06      — runs experiments/06_pareto_sweep.py
+make all        — runs exp01 through exp06 in sequence
+make clean      — removes __pycache__ and .pyc files
+
+---
+
+STEP 12: WRITE make data output — dataset download instructions
+
+When the user runs `make data`, print these exact instructions:
+
+=== DATASET DOWNLOAD INSTRUCTIONS ===
+
+1. KITTI Flow 2015 (required — 1.6 GB):
+   URL: https://s3.eu-central-1.amazonaws.com/avg-kitti/data_scene_flow.zip
+   Unzip to: data/kitti/
+   You need: training/image_2/, training/label_2/, training/flow_occ/
+   Note: label_2/ is in the object detection package, not scene flow.
+   Also download: https://s3.eu-central-1.amazonaws.com/avg-kitti/data_object_image_2.zip
+   
+2. DAVIS 2017 480p (required — 794 MB):
+   URL: https://data.vision.ee.ethz.ch/csergi/share/davis/DAVIS-2017-trainval-480p.zip
+   Unzip to: data/davis/
+
+3. Middlebury Other (required — ~45 MB):
+   Images: https://vision.middlebury.edu/flow/data/comp/zip/other-color-allframes.zip
+   GT Flow: https://vision.middlebury.edu/flow/data/comp/zip/other-gt-flow.zip
+   Unzip to: data/middlebury/
+
+4. KITTI-MoSeg (required for mAP evaluation — moving object GT):
+   Paper: Mohamed et al. 2020 "Monocular Instance Motion Segmentation"
+   GitHub: https://github.com/Bariaw/KITTI-MoSeg
+   Download the annotation files and place in: data/kitti/kitti_moseg/
+
+5. Synthetic data: auto-generated, no download needed.
+
+After downloading, run: python -c "from retigate.datasets.kitti import KITTIDataset; d = KITTIDataset(); print(f'KITTI: {len(d)} samples')"
+
+---
+
+STEP 13: WRITE README.md
+
+Write a clean README with:
+- Project description (2 sentences)
+- Setup instructions (venv + pip)
+- Dataset download (point to make data)
+- How to run experiments (make all)
+- How to run tests (make test)
+- Hardware: tested on Apple M3 Pro, macOS
+
+---
+
+STEP 14: FINAL VERIFICATION
+
+Run these checks in sequence. All must pass:
+
+1. python -c "from retigate.core import RetinaCore; r = RetinaCore.golden_baseline(); print('Core OK')"
+2. python -c "from retigate.benchmark import benchmark; print('Benchmark OK')"  
+3. python -c "from retigate.metrics.mAP import DetectionEvaluator; print('mAP OK')"
+4. python -c "from retigate.datasets.kitti import KITTIDataset; print('KITTI loader OK')"
+5. pytest tests/ -v
+6. make test
+
+If all 6 pass, the foundation is ready. Report the output of each check.
+
+---
+
+Do not skip any step. Do not proceed to a later step if an earlier 
+step has a failing test or import error. Report back after each step 
+completes.

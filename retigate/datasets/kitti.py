@@ -16,20 +16,29 @@ class KITTIDataset:
     """
     Loads KITTI object detection / scene flow data from data/kitti/.
 
-    Expects:
-        data/kitti/training/image_2/   — input images
-        data/kitti/training/label_2/   — object detection labels
-        data/kitti/training/flow_occ/  — optical flow GT (scene flow pack)
+    Actual on-disk layout after downloading both KITTI packages:
+        data/kitti/data_scene_flow/training/image_2/   — _10.png reference frames
+        data/kitti/data_scene_flow/training/flow_occ/  — optical flow GT
+        data/kitti/training/label_2/                   — object detection labels
+
+    Only the _10.png frames (reference frames) are indexed; _11.png are
+    the second frames used for flow computation.
     """
 
     def __init__(self, root: str = 'data/kitti'):
         self.root = Path(root)
-        self.image_dir = self.root / 'training' / 'image_2'
+
+        # Scene-flow pack has images and flow
+        sf = self.root / 'data_scene_flow' / 'training'
+        self.image_dir = sf / 'image_2'
+        self.flow_dir = sf / 'flow_occ'
+
+        # Object-detection pack has labels
         self.label_dir = self.root / 'training' / 'label_2'
-        self.flow_dir = self.root / 'training' / 'flow_occ'
 
         if self.image_dir.exists():
-            self.image_paths = sorted(self.image_dir.glob('*.png'))
+            # Only index the reference (first) frames: *_10.png
+            self.image_paths = sorted(self.image_dir.glob('*_10.png'))
         else:
             self.image_paths = []
 
@@ -41,8 +50,12 @@ class KITTIDataset:
             gt_boxes, gt_classes = self._load_label(img_path.stem)
             yield img_path, gt_boxes, gt_classes
 
-    def _load_label(self, stem: str) -> Tuple[np.ndarray, np.ndarray]:
-        label_path = self.label_dir / f'{stem}.txt'
+    def _label_stem(self, img_stem: str) -> str:
+        """Convert image stem '000042_10' → label stem '000042'."""
+        return img_stem.replace('_10', '')
+
+    def _load_label(self, img_stem: str) -> Tuple[np.ndarray, np.ndarray]:
+        label_path = self.label_dir / f'{self._label_stem(img_stem)}.txt'
         boxes: List[List[float]] = []
         classes: List[int] = []
 
@@ -58,7 +71,8 @@ class KITTIDataset:
                 if cls_name not in CLASS_MAP:
                     continue
                 # KITTI format: left top right bottom (columns 4-7, 0-indexed)
-                x1, y1, x2, y2 = float(parts[4]), float(parts[5]), float(parts[6]), float(parts[7])
+                x1, y1, x2, y2 = (float(parts[4]), float(parts[5]),
+                                   float(parts[6]), float(parts[7]))
                 boxes.append([x1, y1, x2, y2])
                 classes.append(CLASS_MAP[cls_name])
 
@@ -66,9 +80,9 @@ class KITTIDataset:
             return np.array(boxes, dtype=np.float32), np.array(classes, dtype=np.int64)
         return np.zeros((0, 4), dtype=np.float32), np.zeros(0, dtype=np.int64)
 
-    def load_flow_gt(self, stem: str) -> Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    def load_flow_gt(self, img_stem: str) -> Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]]:
         """
-        Load KITTI optical flow GT for image `stem`.
+        Load KITTI optical flow GT for image stem (e.g. '000042_10').
 
         Returns:
             (flow_u, flow_v, valid_mask) as float32/bool arrays,
@@ -80,7 +94,8 @@ class KITTIDataset:
             valid  = img[:,:,0] > 0
         """
         import cv2
-        flow_path = self.flow_dir / f'{stem}_10.png'
+        # Flow files share the same _10 suffix as reference frames
+        flow_path = self.flow_dir / f'{img_stem}.png'
         if not flow_path.exists():
             return None
 

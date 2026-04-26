@@ -129,12 +129,16 @@ class RetinaCore:
             'active_mask': active_mask,
         }
 
-    def get_roi_bbox(self, out: dict, pad: int = 40,
-                     frame_shape: tuple = None) -> tuple:
+    def get_roi_clusters(self, out: dict, pad: int = 40,
+                         frame_shape: tuple = None,
+                         max_area_frac: float = 0.10) -> list:
         """
-        From process_frame output, return (x1,y1,x2,y2) bounding box
-        of the active kinetic zone, with padding.
-        Returns None if no active pixels.
+        Return individual kinetic-zone bounding boxes, one per motion cluster.
+        Uses the same background-blob filter as get_roi_bbox (> max_area_frac),
+        but returns each surviving cluster separately instead of their union.
+        Sorted largest-first so callers can cheaply cap with [:N].
+
+        Returns list of (x1, y1, x2, y2) tuples (empty list if none found).
         """
         import cv2
         mask = out['active_mask'].astype(np.uint8) * 255
@@ -142,14 +146,73 @@ class RetinaCore:
         dilated = cv2.dilate(mask, kernel, iterations=1)
         contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL,
                                         cv2.CHAIN_APPROX_SIMPLE)
-        valid = [cv2.boundingRect(c) for c in contours
+
+        H_f, W_f = (frame_shape[:2] if frame_shape is not None
+                    else out['active_mask'].shape[:2])
+        area_limit = max_area_frac * H_f * W_f
+
+        clusters = []
+        for c in contours:
+            a = cv2.contourArea(c)
+            if a <= 200 or a > area_limit:
+                continue
+            x, y, w, h = cv2.boundingRect(c)
+            if frame_shape is not None:
+                H, W = frame_shape[:2]
+                x1 = max(0, x - pad);    y1 = max(0, y - pad)
+                x2 = min(W, x + w + pad); y2 = min(H, y + h + pad)
+            else:
+                x1, y1, x2, y2 = x, y, x + w, y + h
+            clusters.append((a, x1, y1, x2, y2))
+
+        clusters.sort(reverse=True)
+        return [(x1, y1, x2, y2) for _, x1, y1, x2, y2 in clusters]
+
+    def get_roi_bbox(self, out: dict, pad: int = 40,
+                     frame_shape: tuple = None,
+                     max_area_frac: float = 0.10) -> tuple:
+        """
+        From process_frame output, return (x1,y1,x2,y2) bounding box
+        of the active kinetic zone, with padding.
+        Returns None if no active pixels.
+
+        max_area_frac: skip contours whose area exceeds this fraction of the
+        frame.  Prevents the large "background motion mesh" blob — formed when
+        scattered active pixels merge after dilation across unrelated scenes —
+        from dominating the ROI.  Vehicle-scale clusters (< 10 % of frame)
+        survive and produce a tight, task-relevant crop.
+        """
+        import cv2
+        mask = out['active_mask'].astype(np.uint8) * 255
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (35, 35))
+        dilated = cv2.dilate(mask, kernel, iterations=1)
+        contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL,
+                                        cv2.CHAIN_APPROX_SIMPLE)
+
+        H_f, W_f = (frame_shape[:2] if frame_shape is not None
+                    else out['active_mask'].shape[:2])
+        area_limit = max_area_frac * H_f * W_f
+
+        rects = []
+        for c in contours:
+            a = cv2.contourArea(c)
+            if a > 200 and a <= area_limit:
+                rects.append(cv2.boundingRect(c))
+
+        # Fallback: if every contour is too large, use the smallest one
+        if not rects:
+            all_valid = sorted(
+                [(cv2.contourArea(c), cv2.boundingRect(c)) for c in contours
                  if cv2.contourArea(c) > 200]
-        if not valid:
-            return None
-        x1 = min(b[0] for b in valid)
-        y1 = min(b[1] for b in valid)
-        x2 = max(b[0]+b[2] for b in valid)
-        y2 = max(b[1]+b[3] for b in valid)
+            )
+            if not all_valid:
+                return None
+            rects = [all_valid[0][1]]
+
+        x1 = min(b[0] for b in rects)
+        y1 = min(b[1] for b in rects)
+        x2 = max(b[0]+b[2] for b in rects)
+        y2 = max(b[1]+b[3] for b in rects)
         if frame_shape is not None:
             H, W = frame_shape[:2]
             x1 = max(0, x1 - pad)

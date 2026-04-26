@@ -4,11 +4,9 @@ import numpy as np
 
 
 CLASS_MAP = {
-    'Car': 0,
-    'Van': 1,
-    'Truck': 2,
-    'Pedestrian': 3,
-    'Cyclist': 4,
+    'Car': 2,        # COCO: car
+    'Pedestrian': 0, # COCO: person
+    # Van, Truck, Cyclist excluded: ambiguous COCO mapping destabilises mAP
 }
 
 
@@ -54,7 +52,19 @@ class KITTIDataset:
         """Convert image stem '000042_10' → label stem '000042'."""
         return img_stem.replace('_10', '')
 
-    def _load_label(self, img_stem: str) -> Tuple[np.ndarray, np.ndarray]:
+    def _load_label(self, img_stem: str,
+                    max_truncation: float = 0.3,
+                    max_occlusion: int = 1) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Load 2-D boxes and COCO-aligned class IDs for one frame.
+
+        max_truncation: drop objects with truncation flag > this value.
+        max_occlusion:  drop objects with occlusion flag > this value.
+            KITTI levels: 0=fully visible, 1=partly, 2=largely, 3=unknown.
+            Defaults keep Easy + Moderate only (occlusion 0-1, truncation ≤ 0.3).
+            Hard/impossible targets (largely occluded, heavily truncated) are
+            excluded because they destabilise mAP for a zero-shot detector.
+        """
         label_path = self.label_dir / f'{self._label_stem(img_stem)}.txt'
         boxes: List[List[float]] = []
         classes: List[int] = []
@@ -70,7 +80,10 @@ class KITTIDataset:
                 cls_name = parts[0]
                 if cls_name not in CLASS_MAP:
                     continue
-                # KITTI format: left top right bottom (columns 4-7, 0-indexed)
+                # KITTI cols 1-2: truncation (float), occlusion (int)
+                if float(parts[1]) > max_truncation or int(parts[2]) > max_occlusion:
+                    continue
+                # KITTI cols 4-7: left top right bottom (2-D bbox)
                 x1, y1, x2, y2 = (float(parts[4]), float(parts[5]),
                                    float(parts[6]), float(parts[7]))
                 boxes.append([x1, y1, x2, y2])

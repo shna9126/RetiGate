@@ -15,10 +15,8 @@ Usage:
 
 import sys
 from pathlib import Path
-
 import cv2
 import numpy as np
-
 from ultralytics import YOLO
 from retigate import RetinaCore
 from retigate.datasets.kitti import KITTIDataset

@@ -16,7 +16,7 @@ import pandas as pd
 from pathlib import Path
 from tqdm import tqdm
 
-# Add project root to path
+# Project Imports
 from retigate import RetinaCore
 from retigate.datasets.kitti import KITTIDataset
 from retigate.baselines.frame_diff import FrameDiffBaseline

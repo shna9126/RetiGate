@@ -1,0 +1,7 @@
+Variant,Sparsity (%),Motion DSI,Bio-Analogy
+baseline,98.24482042416807,0.04641971,baseline
+no_vor,98.19517745990547,0.045933846,Removed vor
+no_dog,99.19774508832516,0.31466824,Removed dog
+no_temporal,82.79475282461414,0.0009778072,Removed temporal
+no_global,94.66034219471518,0.032191973,Removed global
+no_sac,98.24482042416807,0.0,Removed sac

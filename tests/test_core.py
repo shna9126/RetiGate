@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from retigate.core import RetinaCore
+from retigate.core.retina import RetinaCore
 
 
 def _random_frame(h=480, w=640):
@@ -70,3 +70,28 @@ def test_roi_bbox_returns_none_on_empty_mask():
     out = r.process_frame(frame)
     result = r.get_roi_bbox(out, frame_shape=frame.shape)
     assert result is None, f"Expected None for empty mask, got {result}"
+
+
+def test_roi_bbox_applies_relative_margin():
+    r = RetinaCore.golden_baseline()
+    mask = np.zeros((100, 100), dtype=bool)
+    mask[40:60, 50:70] = True
+    out = {'active_mask': mask}
+
+    no_margin = r.get_roi_bbox(out, frame_shape=mask.shape,
+                               pad=0, margin=0.0)
+    result = r.get_roi_bbox(out, frame_shape=mask.shape,
+                             pad=0, margin=0.10)
+
+    w = no_margin[2] - no_margin[0]
+    h = no_margin[3] - no_margin[1]
+    expected = (
+        max(0, no_margin[0] - int(w * 0.10)),
+        max(0, no_margin[1] - int(h * 0.10)),
+        min(mask.shape[1], no_margin[2] + int(w * 0.10)),
+        min(mask.shape[0], no_margin[3] + int(h * 0.10)),
+    )
+
+    assert result == expected, (
+        f"Expected margin buffer around dilated ROI {expected}, got {result}"
+    )

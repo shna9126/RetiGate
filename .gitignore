@@ -10,3 +10,4 @@ build/
 venv/
 .venv/
 claude_env/
+**/__pycache__/

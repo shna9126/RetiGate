@@ -1,5 +1,6 @@
+# This tells Python: "When someone imports retigate, 
+# give them the RetinaCore class we just lifted from core"
 from .core import RetinaCore
-from .ablation import RetinaAblation
-from .benchmark import benchmark
 
-__all__ = ['RetinaCore', 'RetinaAblation', 'benchmark']
+__version__ = "0.1.0"
+__author__ = "Shivam"

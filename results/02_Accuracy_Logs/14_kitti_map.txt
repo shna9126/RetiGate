@@ -1,0 +1,31 @@
+Real recall and precision
+
+/02_Fidelity_Evaluations/14_kitti_map_audit.py
+>>> TASK: Rigorous mAP Audit (COCO Protocol) on KITTI
+Sequence 0000: mAP@0.5 = 25.22%                                                                                       
+Sequence 0001: mAP@0.5 = 55.18%                                                                                       
+Sequence 0002: mAP@0.5 = 54.77%                                                                                       
+Sequence 0003: mAP@0.5 = 82.99%                                                                                       
+Sequence 0004: mAP@0.5 = 40.04%                                                                                       
+Sequence 0005: mAP@0.5 = 39.99%                                                                                       
+Sequence 0006: mAP@0.5 = 82.34%                                                                                       
+Sequence 0007: mAP@0.5 = 62.23%                                                                                       
+Sequence 0008: mAP@0.5 = 71.77%                                                                                       
+Sequence 0009: mAP@0.5 = 34.30%                                                                                       
+Sequence 0010: mAP@0.5 = 42.46%                                                                                       
+Sequence 0011: mAP@0.5 = 49.65%                                                                                       
+Sequence 0012: mAP@0.5 = 34.23%                                                                                       
+Sequence 0013: mAP@0.5 = 40.39%                                                                                       
+Sequence 0014: mAP@0.5 = 51.34%                                                                                       
+Sequence 0015: mAP@0.5 = 34.75%                                                                                       
+Sequence 0016: mAP@0.5 = 29.46%                                                                                       
+Sequence 0017: mAP@0.5 = 38.44%                                                                                       
+Sequence 0018: mAP@0.5 = 88.02%                                                                                       
+Sequence 0019: mAP@0.5 = 34.21%                                                                                       
+Sequence 0020: mAP@0.5 = 63.03%                                                                                       
+
+============================================================
+FINAL RIGOROUS AUDIT: KITTI TRACKING (mAP@0.5)
+============================================================
+Mean System mAP: 50.23%
+============================================================

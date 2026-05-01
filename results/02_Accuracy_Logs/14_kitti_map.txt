@@ -29,3 +29,5 @@ FINAL RIGOROUS AUDIT: KITTI TRACKING (mAP@0.5)
 ============================================================
 Mean System mAP: 50.23%
 ============================================================
+
+Mean mAP@50: 50.23% [42.93%, 58.53%] (95% CI, bootstrap n=10000) by running 02_Fidelity_Evaluations/ci_bootstrap.py

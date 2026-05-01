@@ -1,0 +1,150 @@
+GPU: Tesla T4, 15360 MiB
+Model loaded.
+Loaded 10 frames.
+Frame size: 1242×375 px
+
+ROI Statistics (n=100 frames):
+  Median : 812×300 px  (47.9%)
+  Mean   : 755×291 px  (48.2% ± 25.4%)
+  Range  : 5.5% – 100.0%
+
+Crop: 812×300 px
+Dense  imgsz: 1248
+Sparse imgsz: 832
+
+Note: Detection accuracy reported separately.
+See Table X: Dense mAP@50=41.07%, Sparse=38.14%, Retention=92.86%
+(21 KITTI Tracking sequences, torchmetrics COCO protocol)
+
+────────────────────────────────────────────────────────────
+PHASE 1: KITTI CANONICAL BENCHMARK
+────────────────────────────────────────────────────────────
+  Latency [Dense] imgsz=1248 ...
+  Latency [Sparse] imgsz=832 ...
+  Power  [Dense] imgsz=1248 ...
+  Power  [Sparse] imgsz=832 ...
+
+======================================================================
+HARDWARE AUDIT — NVIDIA T4 — RETIGATE vs DENSE YOLO11m
+======================================================================
+Metric                   | Dense (full frame)     | Sparse (ROI)
+──────────────────────────────────────────────────────────────────────
+Input resolution         | 1242×375 px             | 812×300 px
+imgsz                    | 1248                   | 832
+ROI area                 | 100.0%                 | 47.9%
+──────────────────────────────────────────────────────────────────────
+Mean Latency             | 33.58                  | 20.17 ms
+Median Latency           | 32.74                  | 20.15 ms
+Std Latency              | 3.94                   | 0.37 ms
+P95 Latency              | 37.06                  | 20.78 ms
+FPS                      | 30.5                   | 49.6
+──────────────────────────────────────────────────────────────────────
+Avg Power                | 64.3                   | 64.2 W
+Power Std                | 3.5                    | 6.1 W
+Energy/Frame             | 2106.95                | 1294.36 mJ
+──────────────────────────────────────────────────────────────────────
+Mean Detections          | 12.5                   | 6.5
+Detection Retention      | —                      | 52.0%
+──────────────────────────────────────────────────────────────────────
+SPEEDUP (median)         | 1.63×
+POWER DELTA              | +0.2%
+ENERGY SAVING            | 38.6%
+LATENCY VARIANCE RATIO   | 10.6× more stable (sparse)
+======================================================================
+
+────────────────────────────────────────────────────────────
+PHASE 2: RESOLUTION SCALING WITH POWER
+────────────────────────────────────────────────────────────
+
+Res      |  Dense ms | Sparse ms |  Speedup |  E-save |  D-FPS |  S-FPS | ROI px
+────────────────────────────────────────────────────────────────────────────────
+  Latency [KITTI dense] imgsz=1248 ...
+  Latency [KITTI sparse] imgsz=832 ...
+  Power  [KITTI dense pwr] imgsz=1248 ...
+  Power  [KITTI sparse pwr] imgsz=832 ...
+KITTI    |    31.33ms |    19.73ms |    1.59× |   37.1% |  31.9 |  50.7 | 812×300
+  Latency [1080p dense] imgsz=1920 ...
+  Latency [1080p sparse] imgsz=1280 ...
+  Power  [1080p dense pwr] imgsz=1920 ...
+  Power  [1080p sparse pwr] imgsz=1280 ...
+1080p    |   127.02ms |    70.81ms |    1.79× |   44.9% |   7.9 |  14.1 | 1255×864
+  Latency [4K dense] imgsz=3840 ...
+  Latency [4K sparse] imgsz=2528 ...
+  Power  [4K dense pwr] imgsz=3840 ...
+  Power  [4K sparse pwr] imgsz=2528 ...
+4K       |   564.50ms |   303.78ms |    1.86× |   47.1% |   1.8 |   3.3 | 2510×1728
+────────────────────────────────────────────────────────────────────────────────
+
+
+% ─── LATEX TABLE 1: KITTI CANONICAL ───
+
+\begin{table}[t]
+\centering
+\caption{Per-frame inference latency and energy on NVIDIA Tesla T4 GPU
+(CUDA events, $n=200$ runs). Sparse inference operates on the RetiGate
+ROI crop (median: 47.9\% of frame, $\sigma=25.4\%$). Power measured via \texttt{nvidia-smi} at 20\,Hz.}
+\label{tab:efficiency_kitti}
+\setlength{\tabcolsep}{6pt}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Metric} & \textbf{Dense} & \textbf{Sparse} &
+\textbf{$\Delta$} \\
+\midrule
+Median latency (ms) & 32.74 & 20.15 & 1.63$\times$ faster \\
+Latency std (ms) & 3.94 & 0.37 & 10.6$\times$ more stable \\
+P95 latency (ms) & 37.06 & 20.78 & — \\
+Throughput (FPS) & 30.5 & 49.6 & +19.1 FPS \\
+Avg power (W) & 64.3 & 64.2 & +0.2\% \\
+Energy/frame (mJ) & 2107 & 1294 & $-$38.6\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+% ─── LATEX TABLE 2: RESOLUTION SCALING ───
+
+\begin{table}[t]
+\centering
+\caption{Inference latency across resolutions on NVIDIA Tesla T4.
+ROI maintained at 47.9\% of frame area at all resolutions.
+$n=100$ CUDA-event measurements, median reported.}
+\label{tab:resolution_scaling}
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Res.} & \textbf{Dense (ms)} & \textbf{Sparse (ms)} &
+\textbf{Speedup} & \textbf{E-save} & \textbf{S-FPS} \\
+\midrule
+KITTI & 31.3 & 19.7 & 1.59$\times$ & 37.1\% & 50.7 \\
+1080p & 127.0 & 70.8 & 1.79$\times$ & 44.9\% & 14.1 \\
+4K & 564.5 & 303.8 & 1.86$\times$ & 47.1\% & 3.3 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+============================================================
+NUMBERS TO USE IN PAPER
+============================================================
+Hardware : NVIDIA Tesla T4, Tesla T4, 15360 MiB
+Model    : YOLO11m
+Timing   : CUDA events, n=200 (warmup=50)
+Power    : nvidia-smi 20Hz, trimmed ±10%
+
+ROI Statistics (n=100 KITTI frames):
+  Median : 812×300 px (47.9% of frame)
+  Mean   : 755×291 px (48.2% ± 25.4%)
+  Range  : 5.5% – 100.0%
+
+KITTI Benchmark (1242×375):
+  Dense  : 32.74 ± 3.94 ms  (30.5 FPS)
+  Sparse : 20.15 ± 0.37 ms  (49.6 FPS)
+  Speedup: 1.63×
+  Power  : 64.3W → 64.2W (+0.2%)
+  Energy : 2107mJ → 1294mJ (38.6% saving)
+  Latency variance: 10.6× more stable (sparse)
+  Detections: Dense=12.5, Sparse=6.5 (52.0% retention)
+
+Resolution Scaling:
+  KITTI : 1.59× (31.3→19.7ms, saves 11.6ms/frame, 50.7 FPS)
+  1080p : 1.79× (127.0→70.8ms, saves 56.2ms/frame, 14.1 FPS)
+  4K    : 1.86× (564.5→303.8ms, saves 260.7ms/frame, 3.3 FPS)
+============================================================

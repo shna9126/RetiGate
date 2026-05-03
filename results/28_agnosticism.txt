@@ -1,0 +1,88 @@
+06_Baselines/28_detector_agnosticism.py
+12:40:35 [INFO] Mode: active sequences ['0006', '0012', '0015', '0020']
+12:40:35 [INFO] 
+───────────────────────────────────────────────────────
+12:40:35 [INFO] Sequence 0006
+12:40:35 [INFO] ───────────────────────────────────────────────────────
+12:40:35 [INFO]   [YOLO11m] Dense  seq=0006  device=mps
+12:40:42 [INFO]   [YOLO11m] Sparse seq=0006  device=mps                                                               
+12:40:58 [INFO]   YOLO11m: Dense=61.96%  Sparse=70.98%  Retention=114.6%  ROI=42.7%                                   
+12:40:58 [WARNING] RT-DETR: MPS has incomplete op support — falling back to CPU. Expect ~4-8× slower inference.
+12:40:58 [INFO]   [RT-DETR-L] Dense  seq=0006  device=cpu
+12:42:42 [WARNING] RT-DETR: MPS has incomplete op support — falling back to CPU. Expect ~4-8× slower inference.       
+12:42:42 [INFO]   [RT-DETR-L] Sparse seq=0006  device=cpu
+12:44:31 [INFO]   RT-DETR-L: Dense=78.61%  Sparse=80.50%  Retention=102.4%  ROI=42.7%                                 
+12:44:31 [INFO] 
+───────────────────────────────────────────────────────
+12:44:31 [INFO] Sequence 0012
+12:44:31 [INFO] ───────────────────────────────────────────────────────
+12:44:31 [INFO]   [YOLO11m] Dense  seq=0012  device=mps
+12:44:33 [INFO]   [YOLO11m] Sparse seq=0012  device=mps                                                               
+12:44:38 [INFO]   YOLO11m: Dense=29.34%  Sparse=42.52%  Retention=144.9%  ROI=20.4%                                   
+12:44:38 [WARNING] RT-DETR: MPS has incomplete op support — falling back to CPU. Expect ~4-8× slower inference.
+12:44:38 [INFO]   [RT-DETR-L] Dense  seq=0012  device=cpu
+12:45:14 [WARNING] RT-DETR: MPS has incomplete op support — falling back to CPU. Expect ~4-8× slower inference.       
+12:45:14 [INFO]   [RT-DETR-L] Sparse seq=0012  device=cpu
+12:45:51 [INFO]   RT-DETR-L: Dense=35.85%  Sparse=48.24%  Retention=134.5%  ROI=20.4%                                 
+12:45:51 [INFO] 
+───────────────────────────────────────────────────────
+12:45:51 [INFO] Sequence 0015
+12:45:51 [INFO] ───────────────────────────────────────────────────────
+12:45:51 [INFO]   [YOLO11m] Dense  seq=0015  device=mps
+12:46:02 [INFO]   [YOLO11m] Sparse seq=0015  device=mps                                                               
+12:46:26 [INFO]   YOLO11m: Dense=52.61%  Sparse=39.48%  Retention=75.0%  ROI=44.5%                                    
+12:46:26 [WARNING] RT-DETR: MPS has incomplete op support — falling back to CPU. Expect ~4-8× slower inference.
+12:46:26 [INFO]   [RT-DETR-L] Dense  seq=0015  device=cpu
+12:49:23 [WARNING] RT-DETR: MPS has incomplete op support — falling back to CPU. Expect ~4-8× slower inference.       
+12:49:23 [INFO]   [RT-DETR-L] Sparse seq=0015  device=cpu
+12:52:24 [INFO]   RT-DETR-L: Dense=57.12%  Sparse=43.53%  Retention=76.2%  ROI=44.5%                                  
+12:52:24 [INFO] 
+───────────────────────────────────────────────────────
+12:52:24 [INFO] Sequence 0020
+12:52:24 [INFO] ───────────────────────────────────────────────────────
+12:52:24 [INFO]   [YOLO11m] Dense  seq=0020  device=mps
+12:52:47 [INFO]   [YOLO11m] Sparse seq=0020  device=mps                                                               
+12:54:14 [INFO]   YOLO11m: Dense=63.25%  Sparse=48.43%  Retention=76.6%  ROI=81.6%                                    
+12:54:14 [WARNING] RT-DETR: MPS has incomplete op support — falling back to CPU. Expect ~4-8× slower inference.
+12:54:14 [INFO]   [RT-DETR-L] Dense  seq=0020  device=cpu
+13:00:49 [WARNING] RT-DETR: MPS has incomplete op support — falling back to CPU. Expect ~4-8× slower inference.       
+13:00:49 [INFO]   [RT-DETR-L] Sparse seq=0020  device=cpu
+13:07:34 [INFO]   RT-DETR-L: Dense=68.59%  Sparse=52.81%  Retention=77.0%  ROI=81.6%                                  
+
+=================================================================
+DETECTOR AGNOSTICISM — Per Sequence Results
+=================================================================
+Sequence  Detector  Dense mAP@50  Sparse mAP@50  Retention@50 (%)  Mean ROI area (%)
+    0006   YOLO11m         61.96          70.98            114.55              42.67
+    0006 RT-DETR-L         78.61          80.50            102.41              42.67
+    0012   YOLO11m         29.34          42.52            144.90              20.36
+    0012 RT-DETR-L         35.85          48.24            134.53              20.36
+    0015   YOLO11m         52.61          39.48             75.04              44.49
+    0015 RT-DETR-L         57.12          43.53             76.21              44.49
+    0020   YOLO11m         63.25          48.43             76.57              81.63
+    0020 RT-DETR-L         68.59          52.81             76.99              81.63
+
+=================================================================
+AGGREGATED ACROSS SEQUENCES
+=================================================================
+ Detector  Dense mAP@50  Sparse mAP@50  Retention@50 (%)  Mean ROI area (%)
+RT-DETR-L         60.04          56.27             97.54              47.29
+  YOLO11m         51.79          50.35            102.77              47.29
+
+
+% ── LATEX TABLE ─────────────────────────────
+\begin{table}[h]
+\centering
+\caption{Detector agnosticism: RetiGate with YOLO11m (one-stage) and RT-DETR-L (transformer-based). Evaluated on KITTI Tracking active sequences (0006, 0012, 0015, 0020) where RetiGate ROI activates reliably. Retention = Sparse mAP@50 / Dense mAP@50.}
+\label{tab:agnosticism}
+\small
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Detector} & \textbf{Type} & \textbf{Dense} & \textbf{Sparse} & \textbf{Retention} & \textbf{Med.\ ROI} \\
+\midrule
+RT-DETR-L & Transformer & 60.04\% & 56.27\% & 97.5\% & 47.3\% \\
+YOLO11m & One-stage & 51.79\% & 50.35\% & 102.8\% & 47.3\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+13:07:34 [INFO] 

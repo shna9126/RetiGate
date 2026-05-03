@@ -1,0 +1,19 @@
+FALLBACK ANALYSIS — KITTI TEST SPLIT
+======================================================================
+ Fallback threshold  Recall (%)  Mean area (%)  Fallback rate (%)  Area saved (%)  Eff. speedup (×)
+               0.50       93.25          91.52              88.27            8.48              1.07
+               0.60       92.21          90.03              84.92            9.97              1.09
+               0.70       91.33          88.60              80.79           11.40              1.12
+               0.80       90.56          87.09              74.70           12.91              1.15
+               0.90       89.84          85.88              66.45           14.12              1.20
+               1.00       89.34          85.25               0.02           14.75              1.61
+
+
+KEY OPERATING POINTS FOR PAPER:
+--------------------------------------------------
+thresh=0.50: recall=93.2%  speedup=1.07×  fallback=88.3%
+thresh=0.60: recall=92.2%  speedup=1.09×  fallback=84.9%
+thresh=0.70: recall=91.3%  speedup=1.12×  fallback=80.8%
+thresh=0.80: recall=90.6%  speedup=1.15×  fallback=74.7%
+thresh=0.90: recall=89.8%  speedup=1.20×  fallback=66.4%
+thresh=1.00: recall=89.3%  speedup=1.61×  fallback=0.0%

@@ -32,8 +32,8 @@ scenes = [
     },
     {
         'type':   'kitti',
-        'seq':    '0003',    # was '0001' — change this
-        'frame':  60,        # try 40, 60, 80 until ROI < 70%
+        'seq':    '0006',    
+        'frame':  44,       
         'warmup': 20,
         'label':  'KITTI Tracking — Suburban',
     },

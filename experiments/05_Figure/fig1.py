@@ -119,12 +119,12 @@ def add_caption_bar(img_array, text, color_bgr):
 
 dense_vis = add_caption_bar(
     dense_vis,
-    f'{len(dense_boxes)} detections  |  32.3 ms  |  2107 mJ',
+    f'{len(dense_boxes)} detections  |  31.8 ms  |  2107 mJ',
     (200, 50, 50)
 )
 roi_vis = add_caption_bar(
     roi_vis,
-    f'{roi_area:.0f}% area  |  20.1 ms  |  1294 mJ  |  92.86% mAP kept',
+    f'{roi_area:.0f}% area  |  17.4 ms  |  1294 mJ  |  92.86% mAP kept',
     (20, 160, 60)
 )
 
@@ -217,7 +217,7 @@ C_RED   = '#C0392B'
 C_GRN   = '#1E8449'
 
 # --- Latency ---
-lats    = [32.3, 20.1]
+lats    = [31.8, 17.4]
 lcolors = [C_RED, C_GRN]
 
 b1 = ax_lat.barh(
@@ -246,7 +246,7 @@ for bar, val in zip(b1, lats):
 # Speedup badge
 ax_lat.text(
     36, 0.5,
-    '1.61×',
+    '1.83×',
     ha='center', va='center',
     fontsize=10, color=C_GRN,
     fontweight='bold',

@@ -142,42 +142,76 @@ class RetinaCore:
 
     def get_roi_clusters(self, out: dict, pad: int = 40,
                          frame_shape: tuple = None,
-                         max_area_frac: float = 0.10) -> list:
+                         max_area_frac: float = 0.15,
+                         max_clusters: int = 5) -> list:
         """
-        Return individual kinetic-zone bounding boxes, one per motion cluster.
-        Uses the same background-blob filter as get_roi_bbox (> max_area_frac),
-        but returns each surviving cluster separately instead of their union.
-        Sorted largest-first so callers can cheaply cap with [:N].
+        Return up to max_clusters tight ROI boxes,
+        one per independent motion cluster.
 
-        Returns list of (x1, y1, x2, y2) tuples (empty list if none found).
+        Unlike get_roi_bbox (single bounding box of ALL motion),
+        this returns separate boxes per cluster —
+        avoiding the "pedestrian left + car right = 100% frame"
+        problem of single-box gating.
+
+        Fallback: if all clusters exceed max_area_frac,
+        use the smallest oversized cluster rather than
+        returning empty (same safety logic as get_roi_bbox).
         """
         import cv2
-        mask = out['active_mask'].astype(np.uint8) * 255
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (35, 35))
-        dilated = cv2.dilate(mask, kernel, iterations=1)
-        contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL,
-                                        cv2.CHAIN_APPROX_SIMPLE)
+
+        mask   = out['active_mask'].astype(np.uint8) * 255
+        kernel = cv2.getStructuringElement(
+            cv2.MORPH_RECT, (35, 35)
+        )
+        dilated   = cv2.dilate(mask, kernel, iterations=1)
+        contours, _ = cv2.findContours(
+            dilated,
+            cv2.RETR_EXTERNAL,
+            cv2.CHAIN_APPROX_SIMPLE
+        )
 
         H_f, W_f = (frame_shape[:2] if frame_shape is not None
                     else out['active_mask'].shape[:2])
         area_limit = max_area_frac * H_f * W_f
 
-        clusters = []
+        clusters      = []   # valid clusters
+        skipped_large = []   # too big but not deleted
+
         for c in contours:
             a = cv2.contourArea(c)
-            if a <= 200 or a > area_limit:
-                continue
+            if a <= 200:
+                continue   # noise — ignore
+
             x, y, w, h = cv2.boundingRect(c)
+
             if frame_shape is not None:
                 H, W = frame_shape[:2]
-                x1 = max(0, x - pad);    y1 = max(0, y - pad)
-                x2 = min(W, x + w + pad); y2 = min(H, y + h + pad)
+                x1 = max(0, x - pad)
+                y1 = max(0, y - pad)
+                x2 = min(W, x + w + pad)
+                y2 = min(H, y + h + pad)
             else:
                 x1, y1, x2, y2 = x, y, x + w, y + h
-            clusters.append((a, x1, y1, x2, y2))
 
-        clusters.sort(reverse=True)
-        return [(x1, y1, x2, y2) for _, x1, y1, x2, y2 in clusters]
+            if a > area_limit:
+                # Don't delete — track for fallback
+                skipped_large.append((a, x1, y1, x2, y2))
+            else:
+                clusters.append((a, x1, y1, x2, y2))
+
+        # Safety fallback — mirrors get_roi_bbox logic
+        # If nothing survives filtering, use smallest large cluster
+        # This prevents silent misses of large nearby objects
+        if not clusters and skipped_large:
+            skipped_large.sort(key=lambda x: x[0])  # smallest first
+            clusters = [skipped_large[0]]
+
+        # Sort by area descending, keep top N
+        clusters.sort(key=lambda x: x[0], reverse=True)
+        clusters = clusters[:max_clusters]
+
+        return [(x1, y1, x2, y2)
+                for _, x1, y1, x2, y2 in clusters]
 
     def get_roi_bbox(self, out: dict, pad: int = 40,
                      frame_shape: tuple = None,

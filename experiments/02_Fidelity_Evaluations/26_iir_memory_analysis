@@ -1,0 +1,172 @@
+import cv2
+import numpy as np
+import matplotlib.pyplot as plt
+from pathlib import Path
+from retigate import RetinaCore
+
+OUT = Path("figures")
+
+def simulate_stopping_car(n_frames=80,
+                          stop_frame=30,
+                          H=375, W=1242,
+                          lam=0.10):
+    """
+    Simulate a car moving then stopping.
+    Returns: list of ROI areas over time
+    """
+    retina = RetinaCore.golden_baseline()
+    retina.amacrine_decay = lam
+
+    roi_areas     = []
+    object_active = []
+
+    for t in range(n_frames):
+        # Synthetic frame: moving rectangle
+        frame = np.zeros((H, W), dtype=np.float32)
+
+        if t < stop_frame:
+            # Car moving from left to right
+            x = int(100 + (t / stop_frame) * 400)
+            frame[150:220, x:x+80] = 0.8
+            is_moving = True
+        else:
+            # Car stopped at x=500
+            frame[150:220, 500:580] = 0.8
+            is_moving = False
+
+        # Add background texture
+        rng = np.random.default_rng(42)
+        frame += rng.normal(0, 0.02, frame.shape)
+        frame  = np.clip(frame, 0, 1)
+        frame_uint8 = (frame * 255).astype(np.uint8)
+
+        rout = retina.process_frame(frame_uint8)
+        roi  = retina.get_roi_bbox(
+            rout, frame_shape=(H, W, 3)
+        )
+
+        area = 0.0
+        if roi is not None:
+            area = (
+                (roi[2]-roi[0]) * (roi[3]-roi[1])
+                / (H*W) * 100
+            )
+
+        roi_areas.append(area)
+        object_active.append(is_moving)
+
+    return roi_areas, object_active
+
+def main():
+    lambdas    = [0.05, 0.10, 0.20, 0.50]
+    stop_frame = 30
+    n_frames   = 80
+    colors     = ['#E74C3C','#2980B9','#27AE60','#F39C12']
+
+    fig, ax = plt.subplots(figsize=(9, 5),
+                            facecolor='white')
+
+    for lam, col in zip(lambdas, colors):
+        areas, active = simulate_stopping_car(
+            n_frames=n_frames,
+            stop_frame=stop_frame,
+            lam=lam
+        )
+        ax.plot(range(n_frames), areas,
+                color=col, lw=2,
+                label=f'λ={lam}')
+
+        # Find decay frame (when area < 10%)
+        for t in range(stop_frame, n_frames):
+            if areas[t] < 10.0:
+                memory = t - stop_frame
+                ax.annotate(
+                    f'{memory} frames',
+                    xy=(t, areas[t]),
+                    xytext=(t+2, areas[t]+4),
+                    fontsize=8, color=col,
+                    arrowprops=dict(
+                        arrowstyle='->',
+                        color=col, lw=1
+                    )
+                )
+                break
+
+    # Shade: moving vs stopped
+    ax.axvspan(0, stop_frame, alpha=0.08,
+               color='#27AE60', label='Object moving')
+    ax.axvspan(stop_frame, n_frames, alpha=0.08,
+               color='#E74C3C', label='Object stopped')
+    ax.axvline(stop_frame, color='black',
+               linestyle='--', lw=1.5,
+               label=f'Stop at frame {stop_frame}')
+    ax.axhline(10, color='gray', linestyle=':',
+               lw=1.2, label='10% area threshold')
+
+    # Add annotation explaining identical λ curves during moving phase
+    ax.annotate(
+        'All λ identical\nwhile object moves\n(IIR not yet diverged)',
+        xy=(15, 11.5),
+        xytext=(2, 20),
+        fontsize=7.5,
+        color='#2C3E50',
+        arrowprops=dict(
+            arrowstyle='->',
+            color='#2C3E50',
+            lw=1.0
+        )
+    )
+
+    ax.set_xlabel('Frame Index', fontsize=11)
+    ax.set_ylabel('RetiGate ROI Area (% of frame)',
+                  fontsize=11)
+    ax.set_title(
+    'IIR Temporal Memory: ROI Persistence After Object Stops\n'
+    r'Lower $\lambda$ = slower decay = longer retention'
+    ' | Chosen $\lambda{=}0.10$ gives 10-frame buffer',
+    fontsize=11, fontweight='bold'
+    )
+
+    # Reorder legend handles: moving, stopped, stop line, threshold, then lambdas with λ=0.05 last
+    handles, labels = ax.get_legend_handles_labels()
+    # New order: moving (4), stopped (5), stop line (6), threshold (7), λ=0.10 (1), λ=0.20 (2), λ=0.50 (3), λ=0.05 (0)
+    new_order = [4, 5, 6, 7, 1, 2, 3, 0]
+    reordered_handles = [handles[i] for i in new_order]
+    reordered_labels = [labels[i] for i in new_order]
+    ax.legend(reordered_handles, reordered_labels, fontsize=9,
+              loc='upper right', framealpha=0.9)
+
+    ax.set_xlim(0, n_frames)
+    ax.set_ylim(0, 55)
+    ax.spines[['top','right']].set_visible(False)
+    ax.grid(True, alpha=0.15, linestyle='--')
+
+    plt.tight_layout()
+    for fmt in ['pdf', 'png']:
+        p = OUT / f"fig8_iir_memory.{fmt}"
+        plt.savefig(str(p), dpi=300,
+                    bbox_inches='tight',
+                    facecolor='white')
+        print(f"Saved → {p}")
+
+    # Print summary table
+    print("\n" + "="*50)
+    print("IIR MEMORY: FRAMES RETAINED AFTER STOP")
+    print("="*50)
+    for lam, col in zip(lambdas, colors):
+        areas, _ = simulate_stopping_car(
+            n_frames=n_frames,
+            stop_frame=stop_frame,
+            lam=lam
+        )
+        for t in range(stop_frame, n_frames):
+            if areas[t] < 10.0:
+                print(f"λ={lam}: object retained "
+                      f"for {t-stop_frame} frames "
+                      f"after stopping")
+                break
+
+    plt.close()
+
+if __name__ == "__main__":
+    main()

@@ -249,6 +249,7 @@ draw_sac(RX + RW, row_bottoms[2] + row_h/2, 'Shift &\nsubtract')
 # ── MIDDLE CONNECTORS ────────────────────────────────────────
 # Horizontal dashed lines connecting matching rows
 # with color-coded dots showing the analogy
+'''
 MID_X = 7.9
 for i, yb in enumerate(row_bottoms):
     y_center = yb + row_h / 2
@@ -269,7 +270,7 @@ for i, yb in enumerate(row_bottoms):
 ax.text(MID_X, 8.45, 'Maps to',
         ha='center', fontsize=9,
         color='#E67E22', fontweight='bold')
-
+'''
 # ── LEGEND ───────────────────────────────────────────────────
 patches = [
     mpatches.Patch(facecolor=COLORS['input'],

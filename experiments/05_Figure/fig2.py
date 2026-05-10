@@ -16,7 +16,7 @@ from retigate import RetinaCore
 # Adjust sequence and frame number to your best frame
 SEQ        = "0006"   # highest recall sequence
 FRAME_NUM  = 44       # mid-sequence, temporal state warm
-WARMUP     = 20
+WARMUP     = 50
 
 DATA_ROOT  = Path("data/kitti/data_tracking_image/image_02")
 OUT        = Path("figures")
@@ -50,6 +50,19 @@ print(f"Warmed up on {FRAME_NUM - warmup_start} frames")
 
 # ── PROCESS TARGET FRAME ─────────────────────────────────────
 rout = retina.process_frame(gray)
+# Diagnostic — understand what data we have
+print(f"\nPipeline output keys: {list(rout.keys())}")
+print(f"M_Motion range: "
+      f"[{rout['M_Motion'].min():.6f}, "
+      f"{rout['M_Motion'].max():.6f}]")
+print(f"Active pixels: "
+      f"{(rout['M_Motion'] > 0).sum()} "
+      f"/ {H*W} "
+      f"({(rout['M_Motion']>0).mean()*100:.2f}%)")
+print(f"Sparsity: {rout['sparsity']*100:.2f}%")
+print(f"Amacrine range: "
+      f"[{retina.amacrine_state.min():.6f}, "
+      f"{retina.amacrine_state.max():.6f}]")
 
 # Compute DoG manually for the figure
 img_f = gray.astype(np.float32) / 255.0
@@ -65,15 +78,24 @@ img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
 if roi:
     x1, y1, x2, y2 = roi
-    roi_area = (x2-x1)*(y2-y1) / (W*H) * 100
+    # Clamp to frame
+    x1c = max(2, x1)
+    y1c = max(2, y1)
+    x2c = min(W-6, x2)
+    y2c = min(H-6, y2)
+    
+    roi_area = (x2c-x1c)*(y2c-y1c) / (W*H) * 100
     print(f"ROI: {roi}  ({roi_area:.1f}% of frame)")
     print(f"Sparsity: {rout['sparsity']*100:.1f}%")
 
     # Dim outside ROI
-    roi_vis                      = (img_rgb * 0.2).astype(np.uint8)
-    roi_vis[y1:y2, x1:x2]       = img_rgb[y1:y2, x1:x2]
-    # Green border
-    cv2.rectangle(roi_vis, (x1,y1), (x2,y2), (0,255,0), 4)
+    roi_vis                        = (img_rgb * 0.40).astype(np.uint8)
+    roi_vis[y1c:y2c, x1c:x2c]     = img_rgb[y1c:y2c, x1c:x2c]
+    # Thick green box with black outline
+    cv2.rectangle(roi_vis, (x1c-2, y1c-2),
+                  (x2c+2, y2c+2), (0,0,0), 8)
+    cv2.rectangle(roi_vis, (x1c, y1c),
+                  (x2c, y2c), (0,255,60), 5)
     roi_label = f"ROI  ({roi_area:.0f}% area)"
 else:
     roi_vis   = img_rgb
@@ -128,19 +150,37 @@ def norm(x):
         return np.zeros_like(x)
     return (x - mn) / (mx - mn)
 
+# ── AMACRINE: Log normalization ──────────────────────────────
+amacrine_raw     = retina.amacrine_state.copy()
+p98              = np.percentile(amacrine_raw, 98)
+amacrine_clipped = np.clip(amacrine_raw, 0, p98)
+# Sqrt compression — reduces bright peaks more than DoG
+amacrine_sqrt    = np.sqrt(norm(amacrine_clipped))
+amacrine_blurred = cv2.GaussianBlur(
+    amacrine_sqrt.astype(np.float32), (11, 11), 3.0
+)
+amacrine_display = norm(amacrine_blurred)
+
 # ── GANGLION: Clip then gamma ────────────────────────────────
 # Also replace ganglion processing:
 ganglion_raw = rout['M_Motion'].copy()
 active_vals  = ganglion_raw[ganglion_raw > 0]
-if len(active_vals) > 0:
-    p95 = np.percentile(active_vals, 95)
-    ganglion_clipped = np.where(
-        ganglion_raw >= p95, ganglion_raw, 0.0
-    )
-else:
-    ganglion_clipped = ganglion_raw
 
-ganglion_vis = norm(ganglion_clipped)
+if len(active_vals) > 0:
+    # Use lower threshold — show all active signal
+    # just clip extreme outliers
+    p99 = np.percentile(active_vals, 99)
+    ganglion_clipped = np.clip(ganglion_raw, 0, p99)
+    # Gamma boost so faint pixels become visible
+    ganglion_norm = norm(ganglion_clipped)
+    # Only show pixels above 10% of max — removes noise halo
+    ganglion_norm[ganglion_norm < 0.10] = 0
+    ganglion_vis  = np.power(ganglion_norm, 0.50)
+else:
+    ganglion_vis = norm(ganglion_raw)
+    print("WARNING: No active pixels in ganglion output")
+    print(f"  M_Motion max: {ganglion_raw.max():.6f}")
+    print(f"  M_Motion mean: {ganglion_raw.mean():.6f}")
 
 
 # ── STAGE DEFINITIONS (5 stages) ────────────────────────────
@@ -164,8 +204,8 @@ stages = [
         'color':  False,
     },
     {
-        'data':   norm(retina.amacrine_state),
-        'cmap':   'hot',
+        'data':   amacrine_display,
+        'cmap':   'inferno',
         'title':  'Amacrine State',
         'bio':    'Amacrine Cells',
         'math':   r'$\lambda M + (1{-}\lambda)\hat{M}$',
@@ -279,6 +319,61 @@ for i, (col, stage) in enumerate(zip(img_cols, stages)):
         )
     )
     ax.axis('off')
+
+    # Ganglion inset annotation (stage index 3)
+    if i == 3:
+        # Find centroid of active pixels
+        active_mask = ganglion_vis > 0.1
+        if active_mask.any():
+            ys, xs = np.where(active_mask)
+            # These are already axis fractions (0-1)
+            # because imshow maps pixel coords to axes coords
+            cy = 1.0 - (ys.mean() / H)  # flip y for matplotlib
+            cx = xs.mean() / W
+            print(f"Active pixel centroid: cx={cx:.2f} cy={cy:.2f}")
+        else:
+            # Fallback — point to centre-bottom of panel
+            cx, cy = 0.5, 0.5
+            print("WARNING: no active pixels above 0.1 threshold")
+            print("Lowering threshold for annotation...")
+            # Try lower threshold
+            active_mask2 = ganglion_vis > 0.01
+            if active_mask2.any():
+                ys2, xs2 = np.where(active_mask2)
+                cy = 1.0 - (ys2.mean() / H)
+                cx = xs2.mean() / W
+
+            # Place text in bottom-right, arrow points UP to pixels
+        text_x = 0.72
+        text_y = 0.22
+
+        # Ensure text doesn't overlap with arrow target
+        if cy < 0.4:   # active pixels in upper half
+            text_y = 0.75  # put text in lower half
+
+        ax.annotate(
+            f'active pixels\n({(active_mask.sum()/(H*W)*100):.2f}%)',
+            xy=(cx, cy),
+            xytext=(text_x, text_y),
+            xycoords='axes fraction',
+            textcoords='axes fraction',
+            fontsize=8,
+            color='white',
+            fontweight='bold',
+            ha='center',
+            arrowprops=dict(
+                arrowstyle='->',
+                color='white',
+                lw=1.5,
+                connectionstyle='arc3,rad=0.2'
+            ),
+            bbox=dict(
+                boxstyle='round,pad=0.3',
+                facecolor='#C0392B',
+                alpha=0.90,
+                edgecolor='none'
+            )
+        )
 
     # Green border on ROI panel
     if stage['color']:

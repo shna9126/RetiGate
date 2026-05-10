@@ -1,5 +1,8 @@
 # experiments/figures/fig4.py
-# Qualitative results grid — 3 scenes × 2 columns
+# Qualitative results — 3 domains × 2 columns
+# Row 1: KITTI Suburban   (in-distribution)
+# Row 2: DAVIS goat       (zero-shot, animal)
+# Row 3: Middlebury Walking (zero-shot, indoor)
 
 import cv2
 import numpy as np
@@ -13,40 +16,45 @@ from retigate import RetinaCore
 OUT = Path("figures")
 OUT.mkdir(parents=True, exist_ok=True)
 
-# ── SCENE CONFIGURATIONS ─────────────────────────────────────
-# Pick 2 KITTI sequences + 1 DAVIS sequence
-# Using sequences confirmed to have cars in ROI
+# ── DATA ROOTS ───────────────────────────────────────────────
+KITTI_ROOT   = Path("data/kitti/data_tracking_image/image_02")
+LBL_DIR      = Path("data/kitti/data_tracking_image/label_02")
+DAVIS_ROOT   = Path("data/davis/DAVIS/JPEGImages/480p")
+DAVIS_ANNO   = Path("data/davis/DAVIS/Annotations/480p")
+MIDDLEBURY   = Path("data/middlebury/other-data/Urban2")
 
-KITTI_ROOT = Path("data/kitti/data_tracking_image/image_02")
-LBL_DIR    = Path("data/kitti/data_tracking_image/label_02")
-DAVIS_ROOT = Path("data/davis/DAVIS/JPEGImages/480p")
-DAVIS_ANNO = Path("data/davis/DAVIS/Annotations/480p")
-
+# ── SCENE CONFIGS ────────────────────────────────────────────
 scenes = [
     {
-        'type':   'kitti',
-        'seq':    '0004',
-        'frame':  50,        # confirmed good — 41% ROI
-        'warmup': 20,
-        'label':  'KITTI Tracking — Urban',
+        'type':        'kitti',
+        'seq':         '0006',
+        'frame':       44,
+        'warmup':      20,
+        'label':       'KITTI Tracking\n— Suburban',
+        'badge':       None,
+        'badge_color': None,
     },
     {
-        'type':   'kitti',
-        'seq':    '0006',    
-        'frame':  44,       
-        'warmup': 20,
-        'label':  'KITTI Tracking — Suburban',
+        'type':        'davis',
+        'seq':         'sheep',
+        'frame':       24,       # 00035.jpg, ROI=11%
+        'warmup':      8,
+        'label':       'DAVIS 2017\n— Zero-Shot',
+        'badge':       'Zero-shot\ntransfer',
+        'badge_color': '#8E44AD',
     },
     {
-        'type':   'davis',
-        'seq':    'car-roundabout',
-        'frame':  20,
-        'warmup': 15,
-        'label':  'DAVIS 2017 — Zero-Shot Transfer',
+        'type':        'middlebury',
+        'seq':         'Urban2',
+        'frame':       4,        
+        'warmup':      3,
+        'label':       'Middlebury\n— Zero-Shot',
+        'badge':       'Middlebury\n(no retuning)',
+        'badge_color': '#0E6655',
     },
 ]
 
-# ── HELPERS ──────────────────────────────────────────────────
+# ── GT LOADERS ───────────────────────────────────────────────
 def load_kitti_gt(seq, frame_num):
     boxes = []
     try:
@@ -54,8 +62,10 @@ def load_kitti_gt(seq, frame_num):
             LBL_DIR / f"{seq}.txt",
             sep=' ', header=None
         )
-        gt_df = gt_df[[0,2,6,7,8,9]]
-        gt_df.columns = ['frame','type','x1','y1','x2','y2']
+        gt_df = gt_df[[0, 2, 6, 7, 8, 9]]
+        gt_df.columns = [
+            'frame','type','x1','y1','x2','y2'
+        ]
         frame_gt = gt_df[
             (gt_df['frame'] == frame_num) &
             (gt_df['type'].isin(
@@ -66,22 +76,18 @@ def load_kitti_gt(seq, frame_num):
             boxes.append(
                 [row.x1, row.y1, row.x2, row.y2]
             )
-    except:
-        pass
+    except Exception as e:
+        print(f"  GT load warning: {e}")
     return boxes
 
 
-def load_davis_gt(seq, frame_num):
-    """Get GT boxes from DAVIS mask."""
-    img_paths = sorted(
-        list((DAVIS_ROOT / seq).glob("*.jpg"))
+def load_davis_gt(seq, frame_path):
+    """Load GT boxes from DAVIS binary mask."""
+    boxes     = []
+    mask_path = (
+        DAVIS_ANNO / seq /
+        Path(frame_path).name.replace('.jpg', '.png')
     )
-    if frame_num >= len(img_paths):
-        return [], None
-    img_path  = img_paths[frame_num]
-    mask_path = (DAVIS_ANNO / seq /
-                 img_path.name.replace('.jpg', '.png'))
-    boxes = []
     if mask_path.exists():
         mask = cv2.imread(
             str(mask_path), cv2.IMREAD_GRAYSCALE
@@ -90,21 +96,26 @@ def load_davis_gt(seq, frame_num):
             if uid == 0:
                 continue
             ys, xs = np.where(mask == uid)
-            if len(xs) > 0:
+            if len(xs) > 50:   # ignore tiny regions
                 boxes.append([
                     int(np.min(xs)), int(np.min(ys)),
                     int(np.max(xs)), int(np.max(ys))
                 ])
-    return boxes, str(img_path)
+    return boxes
 
 
+# ── SCENE PROCESSOR ──────────────────────────────────────────
 def process_scene(scene, model):
-    """Returns (dense_img_rgb, sparse_img_rgb, meta_dict)"""
+    """
+    Returns (dense_rgb, sparse_rgb, meta_dict)
+    """
+    stype = scene['type']
 
-    # Load image
-    if scene['type'] == 'kitti':
+    # ── Load image paths + target image ──────────────────
+    if stype == 'kitti':
         img_paths = sorted(
-            list((KITTI_ROOT / scene['seq']).glob("*.png"))
+            list((KITTI_ROOT / scene['seq'])
+                 .glob("*.png"))
         )
         img_path  = img_paths[scene['frame']]
         img       = cv2.imread(str(img_path))
@@ -112,25 +123,48 @@ def process_scene(scene, model):
             scene['seq'], scene['frame']
         )
 
-    else:  # davis
+    elif stype == 'davis':
         img_paths = sorted(
-            list((DAVIS_ROOT / scene['seq']).glob("*.jpg"))
+            list((DAVIS_ROOT / scene['seq'])
+                 .glob("*.jpg"))
         )
         img_path  = img_paths[scene['frame']]
         img       = cv2.imread(str(img_path))
-        gt_boxes, _ = load_davis_gt(
-            scene['seq'], scene['frame']
+        gt_boxes  = load_davis_gt(
+            scene['seq'], str(img_path)
+        )
+
+    else:  # middlebury
+        img_paths = sorted(
+            list(MIDDLEBURY.glob("frame*.png"))
+        )
+        if not img_paths:
+            # Try ppm format
+            img_paths = sorted(
+                list(MIDDLEBURY.glob("frame*.ppm"))
+            )
+        img_path  = img_paths[scene['frame']]
+        img       = cv2.imread(str(img_path))
+        gt_boxes  = []   # no GT for Middlebury
+
+    if img is None:
+        raise FileNotFoundError(
+            f"Could not load: {img_path}"
         )
 
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
     H, W    = img.shape[:2]
+    print(f"  Loaded: {img_path.name}  {W}×{H}")
 
-    # Warmup retina
+    # ── Warm up RetiGate ──────────────────────────────────
     retina = RetinaCore.golden_baseline()
-    for p in img_paths[
-        max(0, scene['frame']-scene['warmup']):
+    retina.threshold = 0.10
+
+    warmup_paths = img_paths[
+        max(0, scene['frame'] - scene['warmup']):
         scene['frame']
-    ]:
+    ]
+    for p in warmup_paths:
         wf = cv2.imread(str(p))
         if wf is not None:
             retina.process_frame(
@@ -140,84 +174,100 @@ def process_scene(scene, model):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     rout = retina.process_frame(gray)
     roi  = retina.get_roi_bbox(
-        rout, frame_shape=img.shape,
-        max_area_frac=0.6
+        rout, frame_shape=img.shape
     )
 
-    # YOLO on full frame
-    yolo_results = model.predict(
+    sparsity = rout['sparsity'] * 100
+    print(f"  Sparsity={sparsity:.1f}%", end='')
+
+    if roi:
+        x1, y1, x2, y2 = roi
+        roi_area = (x2-x1)*(y2-y1)/(W*H)*100
+        print(f"  ROI={roi_area:.0f}%")
+    else:
+        roi_area = 100.0
+        print(f"  ROI=100% (full frame fallback)")
+
+    # ── YOLO dense inference ──────────────────────────────
+    yolo_res  = model.predict(
         img, verbose=False, conf=0.35
     )[0]
-    det_boxes = yolo_results.boxes.xyxy.cpu().numpy() \
-                if yolo_results.boxes \
-                else np.zeros((0,4))
+    det_boxes = (yolo_res.boxes.xyxy.cpu().numpy()
+                 if yolo_res.boxes is not None
+                 else np.zeros((0, 4)))
 
-    # Dense visualization
+    # ── Dense panel ───────────────────────────────────────
     dense = img_rgb.copy()
     for box in det_boxes:
-        cv2.rectangle(
-            dense,
-            (int(box[0]), int(box[1])),
-            (int(box[2]), int(box[3])),
-            (220, 50, 50), 2
-        )
+        cv2.rectangle(dense,
+                      (int(box[0])-1, int(box[1])-1),
+                      (int(box[2])+1, int(box[3])+1),
+                      (0, 0, 0), 4)
+        cv2.rectangle(dense,
+                      (int(box[0]), int(box[1])),
+                      (int(box[2]), int(box[3])),
+                      (220, 60, 60), 2)
 
-    # Sparse visualization
+    # ── Sparse panel ──────────────────────────────────────
     if roi:
-        x1,y1,x2,y2 = roi
-        roi_area = (x2-x1)*(y2-y1)/(W*H)*100
-        sparse                = (img_rgb * 0.22).astype(np.uint8)
-        sparse[y1:y2, x1:x2] = img_rgb[y1:y2, x1:x2]
-        cv2.rectangle(sparse, (x1,y1), (x2,y2),
-                      (0, 230, 0), 3)
-    else:
-        sparse   = img_rgb.copy()
-        roi_area = 100.0
-        x1,y1,x2,y2 = 0,0,W,H
+        x1, y1, x2, y2 = roi
+        # Clamp to frame
+        x1c = max(3, x1);   y1c = max(3, y1)
+        x2c = min(W-3, x2); y2c = min(H-3, y2)
 
-    # GT boxes in yellow on sparse panel
+        sparse = (img_rgb * 0.38).astype(np.uint8)
+        sparse[y1c:y2c, x1c:x2c] = \
+            img_rgb[y1c:y2c, x1c:x2c]
+
+        # Green ROI box — thick with black outline
+        cv2.rectangle(sparse,
+                      (x1c-2, y1c-2),
+                      (x2c+2, y2c+2),
+                      (0, 0, 0), 8)
+        cv2.rectangle(sparse,
+                      (x1c, y1c), (x2c, y2c),
+                      (0, 230, 60), 5)
+    else:
+        sparse = img_rgb.copy()
+
+    # GT boxes in yellow
     for box in gt_boxes:
-        cv2.rectangle(
-            sparse,
-            (int(box[0]), int(box[1])),
-            (int(box[2]), int(box[3])),
-            (255, 215, 0), 2
-        )
+        cv2.rectangle(sparse,
+                      (int(box[0])-1, int(box[1])-1),
+                      (int(box[2])+1, int(box[3])+1),
+                      (0, 0, 0), 4)
+        cv2.rectangle(sparse,
+                      (int(box[0]), int(box[1])),
+                      (int(box[2]), int(box[3])),
+                      (255, 215, 0), 2)
 
     meta = {
         'n_det':    len(det_boxes),
         'n_gt':     len(gt_boxes),
         'roi_area': roi_area,
-        'sparsity': rout['sparsity'] * 100,
+        'sparsity': sparsity,
     }
-
     return dense, sparse, meta
 
 
 # ── MAIN ─────────────────────────────────────────────────────
-print("Loading YOLO...")
+print("Loading YOLO11m...")
 model = YOLO('yolo11m.pt')
 
-print("Processing scenes...")
+print("\nProcessing scenes...")
 scene_data = []
 for scene in scenes:
-    print(f"  {scene['label']}...")
+    print(f"\n[{scene['label'].replace(chr(10),' ')}]")
     dense, sparse, meta = process_scene(scene, model)
     scene_data.append((scene, dense, sparse, meta))
 
-# ── FIGURE: 3 rows × 2 cols ──────────────────────────────────
+# ── FIGURE ───────────────────────────────────────────────────
 fig, axes = plt.subplots(
     3, 2,
-    figsize=(12, 7.5),    # slightly shorter
+    figsize=(12, 8.0),
     facecolor='white',
-    gridspec_kw={
-        'wspace': 0.04,
-        'hspace': 0.08    # was 0.18 — much tighter
-    }
+    gridspec_kw={'wspace': 0.04, 'hspace': 0.10}
 )
-
-LEFT_TITLE  = 'Dense Inference (full frame)'
-RIGHT_TITLE = 'RetiGate (sparse ROI)'
 
 for row, (scene, dense, sparse, meta) in \
         enumerate(scene_data):
@@ -225,118 +275,117 @@ for row, (scene, dense, sparse, meta) in \
     ax_l = axes[row, 0]
     ax_r = axes[row, 1]
 
-    # Left — dense
     ax_l.imshow(dense)
     ax_l.axis('off')
-
-    # Right — sparse
     ax_r.imshow(sparse)
     ax_r.axis('off')
 
-    # Row label on left edge
+    # Row label — left of dense panel
     ax_l.text(
         -0.02, 0.5,
         scene['label'],
         transform=ax_l.transAxes,
-        fontsize=8.5, fontweight='bold',
-        color='#2C3E50', va='center',
-        ha='right', rotation=90
+        fontsize=9, fontweight='bold',
+        color='#2C3E50',
+        va='center', ha='right',
+        rotation=90
     )
 
-    # Stats overlay — bottom strip on each image
-    # Left panel: n detections
+    # Dense stats badge
+    det_label = (
+        'YOLO: 0 det. (synthetic domain)'
+        if scene['type'] == 'middlebury'
+        else f'{meta["n_det"]} detections'
+    )
+
     ax_l.text(
-        0.5, 0.02,
-        f'{meta["n_det"]} detections',
+        0.5, 0.03,
+        det_label,
         transform=ax_l.transAxes,
         ha='center', va='bottom',
-        fontsize=8.5, color='white',
+        fontsize=8.5 if scene['type'] != 'middlebury'
+                  else 7.5,
+        color='white',
         fontweight='bold',
         bbox=dict(
-            boxstyle='round,pad=0.25',
+            boxstyle='round,pad=0.3',
             facecolor='#C0392B',
-            alpha=0.82,
+            alpha=0.85,
             edgecolor='none'
         )
     )
 
-    # Right panel: roi area + sparsity
+    # Sparse stats badge
     ax_r.text(
-        0.5, 0.02,
-        f'ROI {meta["roi_area"]:.0f}%  ·  '
-        f'{meta["sparsity"]:.1f}% sparsity',
+        0.5, 0.03,
+        f'ROI {meta["roi_area"]:.0f}%'
+        f'  ·  {meta["sparsity"]:.1f}% sparsity',
         transform=ax_r.transAxes,
         ha='center', va='bottom',
-        fontsize=8.5, color='white',
+        fontsize=9, color='white',
         fontweight='bold',
-        bbox=dict(
-            boxstyle='round,pad=0.25',
-            facecolor='#1E8449',
-            alpha=0.82,
-            edgecolor='none'
-        )
+        bbox=dict(boxstyle='round,pad=0.3',
+                  facecolor='#1E8449',
+                  alpha=0.85, edgecolor='none')
     )
 
-    # DAVIS badge on last row
-    if scene['type'] == 'davis':
+    # Domain badge — top right of sparse panel
+    if scene['badge']:
         ax_r.text(
             0.98, 0.97,
-            'Zero-shot\ntransfer',
+            scene['badge'],
             transform=ax_r.transAxes,
             ha='right', va='top',
-            fontsize=7.5, color='white',
+            fontsize=8, color='white',
             fontweight='bold',
-            bbox=dict(
-                boxstyle='round,pad=0.3',
-                facecolor='#8E44AD',
-                alpha=0.88,
-                edgecolor='none'
-            )
+            bbox=dict(boxstyle='round,pad=0.3',
+                      facecolor=scene['badge_color'],
+                      alpha=0.90, edgecolor='none')
         )
 
-# Column titles at very top
+# Column headers
 axes[0, 0].set_title(
-    LEFT_TITLE,
-    fontsize=11, fontweight='bold',
-    color='#C0392B', pad=6
+    'Dense Inference (full frame)',
+    fontsize=12, fontweight='bold',
+    color='#C0392B', pad=7
 )
 axes[0, 1].set_title(
-    RIGHT_TITLE,
-    fontsize=11, fontweight='bold',
-    color='#1E8449', pad=6
+    'RetiGate (sparse ROI)',
+    fontsize=12, fontweight='bold',
+    color='#1E8449', pad=7
 )
 
-# Legend below last row
+# Legend
 legend_elements = [
-    mpatches.Patch(
-        facecolor='#C0392B', edgecolor='none',
-        label='YOLO detection'
-    ),
-    mpatches.Patch(
-        facecolor='#00E050', edgecolor='none',
-        label='RetiGate ROI'
-    ),
-    mpatches.Patch(
-        facecolor='#FFD700', edgecolor='none',
-        label='Ground truth annotation'
-    ),
-    mpatches.Patch(
-        facecolor='#8E44AD', edgecolor='none',
-        label='DAVIS (no retuning)'
-    ),
+    mpatches.Patch(facecolor='#DC3C3C',
+                   edgecolor='none',
+                   label='YOLO detection'),
+    mpatches.Patch(facecolor='#00E650',
+                   edgecolor='none',
+                   label='RetiGate ROI'),
+    mpatches.Patch(facecolor='#FFD700',
+                   edgecolor='none',
+                   label='Ground truth annotation'),
+    mpatches.Patch(facecolor='#8E44AD',
+                   edgecolor='none',
+                   label='DAVIS (no retuning)'),
+    mpatches.Patch(facecolor='#0E6655',
+                   edgecolor='none',
+                   label='Middlebury (no retuning)'),
 ]
 fig.legend(
     handles=legend_elements,
     loc='lower center',
-    ncol=4,
-    fontsize=9,
-    framealpha=0.9,
-    bbox_to_anchor=(0.5, -0.03),
+    ncol=5,
+    fontsize=8.5,
+    framealpha=0.92,
+    bbox_to_anchor=(0.5, -0.02),
     edgecolor='lightgray'
 )
 
 fig.suptitle(
-    'Qualitative Results: KITTI Tracking and DAVIS 2017',
+    'Qualitative Results: KITTI Tracking, '
+    'DAVIS 2017, and Middlebury',
     fontsize=13, fontweight='bold', y=1.01
 )
 
@@ -346,9 +395,10 @@ for fmt in ['pdf', 'png']:
     plt.savefig(
         str(p), dpi=300,
         bbox_inches='tight',
-        facecolor='white'
+        facecolor='white',
+        pad_inches=0.08
     )
-    print(f"Saved → {p}")
+    print(f"\nSaved → {p}")
 
 plt.close()
 print("Figure 4 done.")
